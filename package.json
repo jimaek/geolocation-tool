@@ -1,0 +1,29 @@
+{
+  "name": "geolocate-tool",
+  "version": "1.0.0",
+  "description": "Geolocate IP addresses using latency measurements",
+  "main": "dist/index.js",
+  "type": "module",
+  "bin": {
+    "geolocate": "dist/index.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "prepare": "npm run build"
+  },
+  "dependencies": {
+    "globalping": "^0.2.0",
+    "countries-list": "^3.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.3.0",
+    "@types/node": "^20.10.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
