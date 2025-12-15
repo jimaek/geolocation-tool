@@ -8,7 +8,7 @@ Learn more about this tool and why it exists in our blog:
 
 ### Install
 ```
-git clone
+git clone https://github.com/jimaek/geolocation-tool
 cd geolocation-tool
 npm install && npm link
 geolocate
