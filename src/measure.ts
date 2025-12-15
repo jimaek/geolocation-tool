@@ -11,6 +11,12 @@ export interface ProbeResult {
   probeNetwork: string;
 }
 
+function checkRateLimitError(result: any): void {
+  if (!result.ok && result.response?.status === 429) {
+    throw new Error('You have run out of credits for this session. You can wait for the rate limit to reset or get higher limits by sponsoring us or hosting probes. Learn more at https://dash.globalping.io?view=add-credits');
+  }
+}
+
 function extractLatencyFromTraceroute(result: any): number | null {
   if (result.status !== 'finished' || !result.hops) {
     return null;
@@ -40,6 +46,8 @@ async function measureContinents(
     target: targetIp,
     locations: CONTINENTS.map(c => ({ magic: c.magic, limit: 5 }))
   });
+
+  checkRateLimitError(result);
 
   if (!result.ok) {
     throw new Error(`Failed to create measurement: ${JSON.stringify(result.data)}`);
@@ -191,6 +199,8 @@ async function pollMeasurement(
 
   while (true) {
     const result = await client.getMeasurement(measurementId);
+    checkRateLimitError(result);
+
     if (!result.ok) {
       throw new Error(`Failed to get measurement: ${JSON.stringify(result.data)}`);
     }
@@ -214,7 +224,7 @@ async function pollMeasurement(
 
     renderProgressBar(finishedCount, expectedProbes, bestName, bestLatency);
 
-    if (data.status === 'finished') {
+    if (data.status !== 'in-progress') {
       process.stdout.write('\n\n');
       break;
     }
@@ -237,6 +247,8 @@ async function pollMeasurementByAverage(
 
   while (true) {
     const result = await client.getMeasurement(measurementId);
+    checkRateLimitError(result);
+
     if (!result.ok) {
       throw new Error(`Failed to get measurement: ${JSON.stringify(result.data)}`);
     }
@@ -260,7 +272,7 @@ async function pollMeasurementByAverage(
 
     renderProgressBar(finishedCount, expectedProbes, bestName, bestLatency);
 
-    if (data.status === 'finished') {
+    if (data.status !== 'in-progress') {
       process.stdout.write('\n\n');
       break;
     }
@@ -285,6 +297,8 @@ async function measureCountries(
     target: targetIp,
     locations: [{ magic: continentInfo!.magic, limit }]
   });
+
+  checkRateLimitError(createResult);
 
   if (!createResult.ok) {
     throw new Error(`Failed to create measurement: ${JSON.stringify(createResult.data)}`);
@@ -335,6 +349,8 @@ async function measureCities(
     locations: [{ country, limit }]
   });
 
+  checkRateLimitError(createResult);
+
   if (!createResult.ok) {
     throw new Error(`Failed to create measurement: ${JSON.stringify(createResult.data)}`);
   }
@@ -369,6 +385,8 @@ async function measureUSStates(
     target: targetIp,
     locations: [{ magic: 'united states', limit }]
   });
+
+  checkRateLimitError(createResult);
 
   if (!createResult.ok) {
     throw new Error(`Failed to create measurement: ${JSON.stringify(createResult.data)}`);
@@ -418,6 +436,8 @@ async function measureUSCities(
     target: targetIp,
     locations: [{ country: 'US', state, limit }]
   });
+
+  checkRateLimitError(createResult);
 
   if (!createResult.ok) {
     throw new Error(`Failed to create measurement: ${JSON.stringify(createResult.data)}`);
