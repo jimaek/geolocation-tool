@@ -1,5 +1,5 @@
 import { Globalping } from 'globalping';
-import { CONTINENTS, getCountryContinent } from './countries.js';
+import { CONTINENTS, getCountryContinent, getCountryName, getStateName } from './countries.js';
 
 export interface ProbeResult {
   country: string;
@@ -85,7 +85,53 @@ function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-function renderProgressBar(finished: number, total: number, bestCountry?: string, bestLatency?: number): void {
+function aggregateLatenciesByField(
+  results: any[],
+  fieldExtractor: (item: any) => string
+): Map<string, number[]> {
+  const dataMap = new Map<string, number[]>();
+
+  for (const item of results) {
+    const latency = extractLatencyFromTraceroute(item.result);
+    if (latency !== null) {
+      const fieldValue = fieldExtractor(item);
+      if (!dataMap.has(fieldValue)) {
+        dataMap.set(fieldValue, []);
+      }
+      dataMap.get(fieldValue)!.push(latency);
+    }
+  }
+
+  return dataMap;
+}
+
+function buildProbeResults(
+  dataMap: Map<string, number[]>,
+  country: string,
+  city?: string,
+  state?: string
+): ProbeResult[] {
+  const results: ProbeResult[] = [];
+
+  for (const [key, latencies] of dataMap.entries()) {
+    const avgLatency = latencies.reduce((a, b) => a + b, 0) / latencies.length;
+    const minLatency = Math.min(...latencies);
+
+    results.push({
+      country: country || key,
+      city: city || (state ? '' : key),
+      state: state || (country === 'US' ? key : undefined),
+      minRtt: minLatency,
+      avgRtt: avgLatency,
+      probeAsn: 0,
+      probeNetwork: ''
+    });
+  }
+
+  return results.sort((a, b) => a.minRtt - b.minRtt);
+}
+
+function renderProgressBar(finished: number, total: number, bestName?: string, bestLatency?: number): void {
   const percentage = (finished / total) * 100;
   const barLength = 40;
   const filledLength = Math.round((finished / total) * barLength);
@@ -96,11 +142,57 @@ function renderProgressBar(finished: number, total: number, bestCountry?: string
 
   let line = `  [${bar}] ${percent}% ${counts}`;
 
-  if (bestCountry && bestLatency !== undefined) {
-    line += ` - Best: ${bestCountry} (${bestLatency.toFixed(2)} ms)`;
+  if (bestName && bestLatency !== undefined) {
+    line += ` - Best: ${bestName} (${bestLatency.toFixed(2)} ms)`;
   }
 
   process.stdout.write('\r' + line.padEnd(100));
+}
+
+async function pollMeasurement(
+  client: Globalping<false>,
+  measurementId: string,
+  expectedProbes: number,
+  fieldExtractor: (item: any) => string
+): Promise<any> {
+  let bestName: string | undefined;
+  let bestLatency: number | undefined;
+  let data: any;
+
+  while (true) {
+    const result = await client.getMeasurement(measurementId);
+    if (!result.ok) {
+      throw new Error(`Failed to get measurement: ${JSON.stringify(result.data)}`);
+    }
+
+    data = result.data;
+    const finishedCount = data.results.filter((r: any) => r.result.status === 'finished').length;
+
+    const tempData = aggregateLatenciesByField(data.results, fieldExtractor);
+
+    if (tempData.size > 0) {
+      let minValue = Infinity;
+      for (const [name, latencies] of tempData.entries()) {
+        const min = Math.min(...latencies);
+        if (min < minValue) {
+          minValue = min;
+          bestName = name;
+          bestLatency = min;
+        }
+      }
+    }
+
+    renderProgressBar(finishedCount, expectedProbes, bestName, bestLatency);
+
+    if (data.status === 'finished') {
+      process.stdout.write('\n\n');
+      break;
+    }
+
+    await sleep(1000);
+  }
+
+  return data;
 }
 
 async function measureCountries(
@@ -127,99 +219,30 @@ async function measureCountries(
 
   console.log(`  Measuring from ${expectedProbes} probes...\n`);
 
-  let data: any;
-  let bestCountry: string | undefined;
-  let bestLatency: number | undefined;
+  const data = await pollMeasurement(
+    client,
+    measurementId,
+    expectedProbes,
+    (item) => item.probe.country
+  );
 
-  while (true) {
-    const result = await client.getMeasurement(measurementId);
-    if (!result.ok) {
-      throw new Error(`Failed to get measurement: ${JSON.stringify(result.data)}`);
-    }
+  const countryData = aggregateLatenciesByField(data.results, (item) => item.probe.country);
+  const results = buildProbeResults(countryData, '');
 
-    data = result.data;
-    const finishedCount = data.results.filter((r: any) => r.result.status === 'finished').length;
-
-    const tempCountryData = new Map<string, number[]>();
-    for (const item of data.results) {
-      const latency = extractLatencyFromTraceroute(item.result);
-      if (latency !== null) {
-        const country = item.probe.country;
-        if (!tempCountryData.has(country)) {
-          tempCountryData.set(country, []);
-        }
-        tempCountryData.get(country)!.push(latency);
-      }
-    }
-
-    if (tempCountryData.size > 0) {
-      let minValue = Infinity;
-      for (const [country, latencies] of tempCountryData.entries()) {
-        const min = Math.min(...latencies);
-        if (min < minValue) {
-          minValue = min;
-          bestCountry = country;
-          bestLatency = min;
-        }
-      }
-    }
-
-    renderProgressBar(finishedCount, expectedProbes, bestCountry, bestLatency);
-
-    if (data.status === 'finished') {
-      process.stdout.write('\n\n');
-      break;
-    }
-
-    await sleep(1000);
-  }
-
-  const countryData = new Map<string, number[]>();
-
-  for (const item of data.results) {
-    const latency = extractLatencyFromTraceroute(item.result);
-    if (latency !== null) {
-      const country = item.probe.country;
-      if (!countryData.has(country)) {
-        countryData.set(country, []);
-      }
-      countryData.get(country)!.push(latency);
-    }
-  }
-
-  const results: ProbeResult[] = [];
-  for (const [country, latencies] of countryData.entries()) {
-    const avgLatency = latencies.reduce((a, b) => a + b, 0) / latencies.length;
-    const minLatency = Math.min(...latencies);
-
-    results.push({
-      country,
-      city: '',
-      minRtt: minLatency,
-      avgRtt: avgLatency,
-      probeAsn: 0,
-      probeNetwork: ''
-    });
-  }
-
-  const sortedResults = results.sort((a, b) => a.minRtt - b.minRtt);
-
-  const topCount = Math.min(3, sortedResults.length);
+  const topCount = Math.min(3, results.length);
   for (let i = 0; i < topCount; i++) {
-    const r = sortedResults[i];
-    const { getCountryName } = await import('./countries.js');
+    const r = results[i];
     const countryName = getCountryName(r.country);
     console.log(`  ${countryName}: ${r.minRtt.toFixed(2)}ms`);
   }
 
-  if (sortedResults.length > 0) {
-    const best = sortedResults[0];
-    const { getCountryName } = await import('./countries.js');
+  if (results.length > 0) {
+    const best = results[0];
     const countryName = getCountryName(best.country);
     console.log(`\nBest country: ${countryName} (${best.minRtt.toFixed(2)}ms)\n`);
   }
 
-  return sortedResults;
+  return results;
 }
 
 async function measureCities(
@@ -245,82 +268,17 @@ async function measureCities(
 
   console.log(`  Measuring from ${expectedProbes} probes...\n`);
 
-  let data: any;
-  let bestCity: string | undefined;
-  let bestLatency: number | undefined;
+  const data = await pollMeasurement(
+    client,
+    measurementId,
+    expectedProbes,
+    (item) => item.probe.city || 'Unknown'
+  );
 
-  while (true) {
-    const result = await client.getMeasurement(measurementId);
-    if (!result.ok) {
-      throw new Error(`Failed to get measurement: ${JSON.stringify(result.data)}`);
-    }
+  const cityData = aggregateLatenciesByField(data.results, (item) => item.probe.city || 'Unknown');
+  const results = buildProbeResults(cityData, country);
 
-    data = result.data;
-    const finishedCount = data.results.filter((r: any) => r.result.status === 'finished').length;
-
-    const tempCityData = new Map<string, number[]>();
-    for (const item of data.results) {
-      const latency = extractLatencyFromTraceroute(item.result);
-      if (latency !== null) {
-        const city = item.probe.city || 'Unknown';
-        if (!tempCityData.has(city)) {
-          tempCityData.set(city, []);
-        }
-        tempCityData.get(city)!.push(latency);
-      }
-    }
-
-    if (tempCityData.size > 0) {
-      let minValue = Infinity;
-      for (const [city, latencies] of tempCityData.entries()) {
-        const min = Math.min(...latencies);
-        if (min < minValue) {
-          minValue = min;
-          bestCity = city;
-          bestLatency = min;
-        }
-      }
-    }
-
-    renderProgressBar(finishedCount, expectedProbes, bestCity, bestLatency);
-
-    if (data.status === 'finished') {
-      process.stdout.write('\n\n');
-      break;
-    }
-
-    await sleep(1000);
-  }
-
-  const cityData = new Map<string, number[]>();
-
-  for (const item of data.results) {
-    const latency = extractLatencyFromTraceroute(item.result);
-    if (latency !== null) {
-      const city = item.probe.city || 'Unknown';
-      if (!cityData.has(city)) {
-        cityData.set(city, []);
-      }
-      cityData.get(city)!.push(latency);
-    }
-  }
-
-  const results: ProbeResult[] = [];
-  for (const [city, latencies] of cityData.entries()) {
-    const avgLatency = latencies.reduce((a, b) => a + b, 0) / latencies.length;
-    const minLatency = Math.min(...latencies);
-
-    results.push({
-      country,
-      city,
-      minRtt: minLatency,
-      avgRtt: avgLatency,
-      probeAsn: 0,
-      probeNetwork: ''
-    });
-  }
-
-  return results.sort((a, b) => a.minRtt - b.minRtt);
+  return results;
 }
 
 async function measureUSStates(
@@ -345,100 +303,30 @@ async function measureUSStates(
 
   console.log(`  Measuring from ${expectedProbes} probes...\n`);
 
-  let data: any;
-  let bestState: string | undefined;
-  let bestLatency: number | undefined;
+  const data = await pollMeasurement(
+    client,
+    measurementId,
+    expectedProbes,
+    (item) => item.probe.state || 'Unknown'
+  );
 
-  while (true) {
-    const result = await client.getMeasurement(measurementId);
-    if (!result.ok) {
-      throw new Error(`Failed to get measurement: ${JSON.stringify(result.data)}`);
-    }
+  const stateData = aggregateLatenciesByField(data.results, (item) => item.probe.state || 'Unknown');
+  const results = buildProbeResults(stateData, 'US', '', '');
 
-    data = result.data;
-    const finishedCount = data.results.filter((r: any) => r.result.status === 'finished').length;
-
-    const tempStateData = new Map<string, number[]>();
-    for (const item of data.results) {
-      const latency = extractLatencyFromTraceroute(item.result);
-      if (latency !== null) {
-        const state = item.probe.state || 'Unknown';
-        if (!tempStateData.has(state)) {
-          tempStateData.set(state, []);
-        }
-        tempStateData.get(state)!.push(latency);
-      }
-    }
-
-    if (tempStateData.size > 0) {
-      let minValue = Infinity;
-      for (const [state, latencies] of tempStateData.entries()) {
-        const min = Math.min(...latencies);
-        if (min < minValue) {
-          minValue = min;
-          bestState = state;
-          bestLatency = min;
-        }
-      }
-    }
-
-    renderProgressBar(finishedCount, expectedProbes, bestState, bestLatency);
-
-    if (data.status === 'finished') {
-      process.stdout.write('\n\n');
-      break;
-    }
-
-    await sleep(1000);
-  }
-
-  const stateData = new Map<string, number[]>();
-
-  for (const item of data.results) {
-    const latency = extractLatencyFromTraceroute(item.result);
-    if (latency !== null) {
-      const state = item.probe.state || 'Unknown';
-      if (!stateData.has(state)) {
-        stateData.set(state, []);
-      }
-      stateData.get(state)!.push(latency);
-    }
-  }
-
-  const results: ProbeResult[] = [];
-  for (const [state, latencies] of stateData.entries()) {
-    const avgLatency = latencies.reduce((a, b) => a + b, 0) / latencies.length;
-    const minLatency = Math.min(...latencies);
-
-    results.push({
-      country: 'US',
-      city: '',
-      state,
-      minRtt: minLatency,
-      avgRtt: avgLatency,
-      probeAsn: 0,
-      probeNetwork: ''
-    });
-  }
-
-  const sortedResults = results.sort((a, b) => a.minRtt - b.minRtt);
-
-  const topCount = Math.min(3, sortedResults.length);
+  const topCount = Math.min(3, results.length);
   for (let i = 0; i < topCount; i++) {
-    const r = sortedResults[i];
-    const { getStateName } = await import('./countries.js');
+    const r = results[i];
     const stateName = getStateName(r.state!);
     console.log(`  ${stateName}: ${r.minRtt.toFixed(2)}ms`);
   }
 
-  if (sortedResults.length > 0) {
-    const best = sortedResults[0];
-    const { getStateName } = await import('./countries.js');
+  if (results.length > 0) {
+    const best = results[0];
     const stateName = getStateName(best.state!);
     console.log(`\nBest state: ${stateName} (${best.minRtt.toFixed(2)}ms)\n`);
   }
 
-  return sortedResults;
+  return results;
 }
 
 async function measureUSCities(
@@ -464,83 +352,17 @@ async function measureUSCities(
 
   console.log(`  Measuring from ${expectedProbes} probes...\n`);
 
-  let data: any;
-  let bestCity: string | undefined;
-  let bestLatency: number | undefined;
+  const data = await pollMeasurement(
+    client,
+    measurementId,
+    expectedProbes,
+    (item) => item.probe.city || 'Unknown'
+  );
 
-  while (true) {
-    const result = await client.getMeasurement(measurementId);
-    if (!result.ok) {
-      throw new Error(`Failed to get measurement: ${JSON.stringify(result.data)}`);
-    }
+  const cityData = aggregateLatenciesByField(data.results, (item) => item.probe.city || 'Unknown');
+  const results = buildProbeResults(cityData, 'US', '', state);
 
-    data = result.data;
-    const finishedCount = data.results.filter((r: any) => r.result.status === 'finished').length;
-
-    const tempCityData = new Map<string, number[]>();
-    for (const item of data.results) {
-      const latency = extractLatencyFromTraceroute(item.result);
-      if (latency !== null) {
-        const city = item.probe.city || 'Unknown';
-        if (!tempCityData.has(city)) {
-          tempCityData.set(city, []);
-        }
-        tempCityData.get(city)!.push(latency);
-      }
-    }
-
-    if (tempCityData.size > 0) {
-      let minValue = Infinity;
-      for (const [city, latencies] of tempCityData.entries()) {
-        const min = Math.min(...latencies);
-        if (min < minValue) {
-          minValue = min;
-          bestCity = city;
-          bestLatency = min;
-        }
-      }
-    }
-
-    renderProgressBar(finishedCount, expectedProbes, bestCity, bestLatency);
-
-    if (data.status === 'finished') {
-      process.stdout.write('\n\n');
-      break;
-    }
-
-    await sleep(1000);
-  }
-
-  const cityData = new Map<string, number[]>();
-
-  for (const item of data.results) {
-    const latency = extractLatencyFromTraceroute(item.result);
-    if (latency !== null) {
-      const city = item.probe.city || 'Unknown';
-      if (!cityData.has(city)) {
-        cityData.set(city, []);
-      }
-      cityData.get(city)!.push(latency);
-    }
-  }
-
-  const results: ProbeResult[] = [];
-  for (const [city, latencies] of cityData.entries()) {
-    const avgLatency = latencies.reduce((a, b) => a + b, 0) / latencies.length;
-    const minLatency = Math.min(...latencies);
-
-    results.push({
-      country: 'US',
-      city,
-      state,
-      minRtt: minLatency,
-      avgRtt: avgLatency,
-      probeAsn: 0,
-      probeNetwork: ''
-    });
-  }
-
-  return results.sort((a, b) => a.minRtt - b.minRtt);
+  return results;
 }
 
 export async function runMeasurements(

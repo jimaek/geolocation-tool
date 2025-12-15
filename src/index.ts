@@ -2,7 +2,6 @@
 
 import { Globalping } from 'globalping';
 import { runMeasurements } from './measure.js';
-import { analyzeResults } from './analyze.js';
 import { getCountryName, getCountryContinent, getStateName } from './countries.js';
 
 function printUsage() {
@@ -21,6 +20,18 @@ function isValidIp(ip: string): boolean {
   return ipv4.test(ip) || ipv6.test(ip);
 }
 
+function formatLocation(result: any): string {
+  const city = result.city || 'Unknown';
+
+  if (result.country === 'US') {
+    const stateName = getStateName(result.state || 'Unknown');
+    return `${city}, ${stateName}, USA`;
+  }
+
+  const countryName = getCountryName(result.country);
+  return `${city}, ${countryName}`;
+}
+
 function printResults(results: any[]) {
   if (results.length === 0) {
     console.log('No results to display');
@@ -37,18 +48,7 @@ function printResults(results: any[]) {
   for (let i = 0; i < topCount; i++) {
     const r = results[i];
     const num = `${i + 1}.`;
-
-    let location;
-    if (isUS) {
-      const city = r.city || 'Unknown';
-      const stateName = getStateName(r.state || 'Unknown');
-      location = `${city}, ${stateName}, USA`.padEnd(40);
-    } else {
-      const city = r.city || 'Unknown';
-      const countryName = getCountryName(r.country);
-      location = `${city}, ${countryName}`.padEnd(40);
-    }
-
+    const location = formatLocation(r).padEnd(40);
     const latency = `${r.minRtt.toFixed(2)} ms`;
     console.log(`  ${num} ${location} ${latency}`);
   }
@@ -57,15 +57,12 @@ function printResults(results: any[]) {
   console.log('                      SUMMARY');
   console.log('═══════════════════════════════════════════════════');
 
+  const location = formatLocation(best);
   if (isUS) {
-    const city = best.city || 'Unknown';
-    const stateName = getStateName(best.state);
-    console.log(`  Location: ${city}, ${stateName}, United States`);
+    console.log(`  Location: ${location}`);
   } else {
-    const city = best.city || 'Unknown';
-    const countryName = getCountryName(best.country);
     const continent = getCountryContinent(best.country) || 'Unknown';
-    console.log(`  Location: ${city}, ${countryName}, ${continent}`);
+    console.log(`  Location: ${location}, ${continent}`);
   }
 
   console.log(`  Minimum Latency: ${best.minRtt.toFixed(2)} ms`);
