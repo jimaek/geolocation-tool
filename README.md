@@ -1,8 +1,10 @@
 # Latency based IP Geolocation 
 
-A simple tool that uses Globalping to resolve an IP to a physical location based on latency. 
+A simple tool that uses [Globalping](https://github.com/jsdelivr/globalping) to resolve an IP to a physical location based on latency. 
 
-Learn more about this tool and why it exists in our blog: [BLOG TITLE and LINK]()
+Learn more about this tool and why it exists in our blog: 
+
+[We have ipinfo at home or how to geolocate IPs in your CLI using latency](https://blog.globalping.io/we-have-ipinfo-at-home-or-how-to-geolocate-ips-in-your-cli-using-latency/)
 
 ### Install
 ```
