@@ -35,41 +35,49 @@ async function measureContinents(
 ): Promise<{ continent: string; avgLatency: number }> {
   console.log('Phase 1: Detecting continent...');
 
-  const measurements = await Promise.all(
-    CONTINENTS.map(async (continent) => {
-      const result = await client.createMeasurement({
-        type: 'traceroute',
-        target: targetIp,
-        locations: [{ magic: continent.magic, limit: 5 }]
-      });
+  const result = await client.createMeasurement({
+    type: 'traceroute',
+    target: targetIp,
+    locations: CONTINENTS.map(c => ({ magic: c.magic, limit: 5 }))
+  });
 
-      if (!result.ok) return { continent: continent.code, avgLatency: Infinity };
+  if (!result.ok) {
+    throw new Error(`Failed to create measurement: ${JSON.stringify(result.data)}`);
+  }
 
-      const data = await client.awaitMeasurement(result.data.id);
-      if (!data.ok) return { continent: continent.code, avgLatency: Infinity };
+  const measurementId = result.data.id;
+  const expectedProbes = result.data.probesCount;
 
-      const latencies: number[] = [];
-      for (const item of data.data.results) {
-        const latency = extractLatencyFromTraceroute(item.result);
-        if (latency !== null) {
-          latencies.push(latency);
-        }
-      }
+  console.log(`  Measuring from ${expectedProbes} probes...\n`);
 
-      const avgLatency = latencies.length > 0
-        ? latencies.reduce((a, b) => a + b, 0) / latencies.length
-        : Infinity;
-
-      const continentInfo = CONTINENTS.find(c => c.code === continent.code);
-      console.log(`  ${continentInfo?.name}: ${avgLatency === Infinity ? 'no data' : avgLatency.toFixed(2) + ' ms'}`);
-
-      return { continent: continent.code, avgLatency };
-    })
+  const data = await pollMeasurementByAverage(
+    client,
+    measurementId,
+    expectedProbes,
+    (item) => item.probe.continent
   );
 
-  const best = measurements
-    .filter(m => m.avgLatency !== Infinity)
-    .sort((a, b) => a.avgLatency - b.avgLatency)[0];
+  const continentLatencies = new Map<string, number[]>();
+  for (const item of data.results) {
+    const latency = extractLatencyFromTraceroute(item.result);
+    if (latency !== null) {
+      const continent = item.probe.continent;
+      if (!continentLatencies.has(continent)) {
+        continentLatencies.set(continent, []);
+      }
+      continentLatencies.get(continent)!.push(latency);
+    }
+  }
+
+  const measurements: { continent: string; avgLatency: number }[] = [];
+  for (const [continent, latencies] of continentLatencies) {
+    const avgLatency = latencies.reduce((a, b) => a + b, 0) / latencies.length;
+    const continentInfo = CONTINENTS.find(c => c.code === continent);
+    console.log(`  ${continentInfo?.name || continent}: ${avgLatency.toFixed(2)} ms`);
+    measurements.push({ continent, avgLatency });
+  }
+
+  const best = measurements.sort((a, b) => a.avgLatency - b.avgLatency)[0];
 
   if (!best) {
     throw new Error('No successful measurements from any continent');
@@ -200,6 +208,52 @@ async function pollMeasurement(
           minValue = min;
           bestName = name;
           bestLatency = min;
+        }
+      }
+    }
+
+    renderProgressBar(finishedCount, expectedProbes, bestName, bestLatency);
+
+    if (data.status === 'finished') {
+      process.stdout.write('\n\n');
+      break;
+    }
+
+    await sleep(1000);
+  }
+
+  return data;
+}
+
+async function pollMeasurementByAverage(
+  client: Globalping<false>,
+  measurementId: string,
+  expectedProbes: number,
+  fieldExtractor: (item: any) => string
+): Promise<any> {
+  let bestName: string | undefined;
+  let bestLatency: number | undefined;
+  let data: any;
+
+  while (true) {
+    const result = await client.getMeasurement(measurementId);
+    if (!result.ok) {
+      throw new Error(`Failed to get measurement: ${JSON.stringify(result.data)}`);
+    }
+
+    data = result.data;
+    const finishedCount = data.results.filter((r: any) => r.result.status === 'finished').length;
+
+    const tempData = aggregateLatenciesByField(data.results, fieldExtractor);
+
+    if (tempData.size > 0) {
+      let minAvg = Infinity;
+      for (const [name, latencies] of tempData.entries()) {
+        const avg = latencies.reduce((a, b) => a + b, 0) / latencies.length;
+        if (avg < minAvg) {
+          minAvg = avg;
+          bestName = name;
+          bestLatency = avg;
         }
       }
     }
