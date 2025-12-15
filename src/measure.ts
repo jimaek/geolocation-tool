@@ -117,10 +117,32 @@ function buildProbeResults(
     const avgLatency = latencies.reduce((a, b) => a + b, 0) / latencies.length;
     const minLatency = Math.min(...latencies);
 
+    let resultCountry: string;
+    let resultCity: string;
+    let resultState: string | undefined;
+
+    if (country === '') {
+      resultCountry = key;
+      resultCity = '';
+      resultState = undefined;
+    } else if (city === '' && state === '') {
+      resultCountry = country;
+      resultCity = '';
+      resultState = key;
+    } else if (city === '' && state) {
+      resultCountry = country;
+      resultCity = key;
+      resultState = state;
+    } else {
+      resultCountry = country;
+      resultCity = key;
+      resultState = undefined;
+    }
+
     results.push({
-      country: country || key,
-      city: city || (state ? '' : key),
-      state: state || (country === 'US' ? key : undefined),
+      country: resultCountry,
+      city: resultCity,
+      state: resultState,
       minRtt: minLatency,
       avgRtt: avgLatency,
       probeAsn: 0,
