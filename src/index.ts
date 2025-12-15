@@ -126,6 +126,12 @@ async function main() {
 
   console.log(`Geolocating ${ip}...\n`);
 
+  if (limit < 100) {
+    console.log(`Note: A limit of ${limit} offers worse results. For better accuracy it is`);
+    console.log('recommended to set a limit of at least 100 probes. The higher the limit');
+    console.log('the higher the accuracy. Best results start at 250.\n');
+  }
+
   try {
     const results = await runMeasurements(client, ip, limit);
     printResults(results);
