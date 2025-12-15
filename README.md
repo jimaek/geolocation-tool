@@ -19,11 +19,13 @@ It's recommended to run the tool with a token for a higher limit of 500 tests pe
 
 This tool will read the token from the env var `GLOBALPING_TOKEN`. It's the same variable the [Globalping CLI](https://github.com/jsdelivr/globalping-cli) uses.
 
+Get a free token in the [Globalping Dashboard](https://dash.globalping.io/).
+
 ```
 Resolve an IP. A default limit of 50 probes is set per phase.
-USA has 5 phases. All other countries have 4 phases.
+USA has 4 phases. All other countries have 3 phases.
 This means the total usage is going to be Phases * Limit.
-So by default 250 for USA and 200 for the rest.
+So by default 200 for USA and 150 for the rest.
 +30 for continent selection in phase 1.
 
 geolocate 213.133.116.45
@@ -34,6 +36,10 @@ This will improve accuracy, especially for cities but will consume lots of credi
 
 geolocate 213.133.116.45 -L 200
 
+
+Provide token explicitly
+
+GLOBALPING_TOKEN=XXX geolocate 213.133.116.45
 
 ```
 
