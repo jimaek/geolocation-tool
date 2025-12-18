@@ -5,10 +5,11 @@ WORKDIR /app
 # Copy shared CLI source
 COPY src ./src
 
-# Copy web source and config
+# Copy web source, config, and assets
 COPY web/package.json ./web/
 COPY web/tsconfig.json ./web/
 COPY web/src ./web/src
+COPY web/assets ./web/assets
 
 WORKDIR /app/web
 

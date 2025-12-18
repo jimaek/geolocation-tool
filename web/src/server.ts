@@ -1,12 +1,75 @@
 import { WebSocketServer, WebSocket } from 'ws';
 import { Globalping } from 'globalping';
+import { Jimp } from 'jimp';
+import { fileURLToPath } from 'url';
+import { dirname, join } from 'path';
 import { runMeasurements, Writer, ProbeResult } from '../../src/measure.js';
 import { getCountryName, getCountryContinent, getStateName } from '../../src/countries.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 const PORT = Number(process.env.PORT) || 8080;
 const TOKEN = process.env.GLOBALPING_TOKEN || '';
 const DEFAULT_LIMIT = 100;
 const MAX_LIMIT = 250;
+
+const LOGO_PATH = join(__dirname, '../../assets/logo.png');
+const LOGO_WIDTH = 60;
+const BG_COLOR = { r: 15, g: 15, b: 26 }; // Match terminal background
+
+let logoArt = '';
+
+async function renderLogo(): Promise<string> {
+  try {
+    const image = await Jimp.read(LOGO_PATH);
+    image.resize({ w: LOGO_WIDTH });
+
+    const width = image.width;
+    const height = image.height;
+    let output = '\r\n';
+
+    for (let y = 0; y < height; y += 2) {
+      for (let x = 0; x < width; x++) {
+        const topColor = image.getPixelColor(x, y);
+        const botColor = (y + 1 < height) ? image.getPixelColor(x, y + 1) : 0x00000000;
+
+        const top = {
+          r: (topColor >> 24) & 0xFF,
+          g: (topColor >> 16) & 0xFF,
+          b: (topColor >> 8) & 0xFF,
+          a: topColor & 0xFF
+        };
+        const bot = {
+          r: (botColor >> 24) & 0xFF,
+          g: (botColor >> 16) & 0xFF,
+          b: (botColor >> 8) & 0xFF,
+          a: botColor & 0xFF
+        };
+
+        const blend = (c: typeof top) => {
+          const alpha = c.a / 255;
+          return {
+            r: Math.round(c.r * alpha + BG_COLOR.r * (1 - alpha)),
+            g: Math.round(c.g * alpha + BG_COLOR.g * (1 - alpha)),
+            b: Math.round(c.b * alpha + BG_COLOR.b * (1 - alpha))
+          };
+        };
+
+        const fg = blend(top);
+        const bg = blend(bot);
+
+        output += `\x1b[38;2;${fg.r};${fg.g};${fg.b}m\x1b[48;2;${bg.r};${bg.g};${bg.b}m▀`;
+      }
+      output += '\x1b[0m\r\n';
+    }
+
+    return output;
+  } catch (err) {
+    console.error('Failed to render logo:', err);
+    return '';
+  }
+}
 
 const WELCOME = `
 IP Geolocation Tool
@@ -164,46 +227,56 @@ async function handleCommand(ws: WebSocket, input: string) {
   out.write(PROMPT);
 }
 
-const wss = new WebSocketServer({ port: PORT });
+async function startServer() {
+  logoArt = await renderLogo();
+  console.log('Logo rendered');
 
-wss.on('connection', (ws) => {
-  let inputBuffer = '';
-  let busy = false;
+  const wss = new WebSocketServer({ port: PORT });
 
-  ws.send(WELCOME);
-  ws.send(PROMPT);
+  wss.on('connection', (ws) => {
+    let inputBuffer = '';
+    let busy = false;
 
-  ws.on('message', async (data) => {
-    if (busy) return;
-
-    const chunk = data.toString();
-
-    for (const char of chunk) {
-      if (char === '\r' || char === '\n') {
-        if (inputBuffer.trim()) {
-          busy = true;
-          const cmd = inputBuffer;
-          inputBuffer = '';
-          await handleCommand(ws, cmd);
-          busy = false;
-        } else {
-          ws.send('\r\n' + PROMPT);
-        }
-      } else if (char === '\x7f' || char === '\b') {
-        if (inputBuffer.length > 0) {
-          inputBuffer = inputBuffer.slice(0, -1);
-          ws.send('\b \b');
-        }
-      } else if (char >= ' ') {
-        inputBuffer += char;
-        ws.send(char);
-      }
+    if (logoArt) {
+      ws.send(logoArt);
     }
+    ws.send(WELCOME);
+    ws.send(PROMPT);
+
+    ws.on('message', async (data) => {
+      if (busy) return;
+
+      const chunk = data.toString();
+
+      for (const char of chunk) {
+        if (char === '\r' || char === '\n') {
+          if (inputBuffer.trim()) {
+            busy = true;
+            const cmd = inputBuffer;
+            inputBuffer = '';
+            await handleCommand(ws, cmd);
+            busy = false;
+          } else {
+            ws.send('\r\n' + PROMPT);
+          }
+        } else if (char === '\x7f' || char === '\b') {
+          if (inputBuffer.length > 0) {
+            inputBuffer = inputBuffer.slice(0, -1);
+            ws.send('\b \b');
+          }
+        } else if (char >= ' ') {
+          inputBuffer += char;
+          ws.send(char);
+        }
+      }
+    });
+
+    ws.on('close', () => {
+      inputBuffer = '';
+    });
   });
 
-  ws.on('close', () => {
-    inputBuffer = '';
-  });
-});
+  console.log(`WebSocket server listening on port ${PORT}`);
+}
 
-console.log(`WebSocket server listening on port ${PORT}`);
+startServer();

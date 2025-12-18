@@ -11,7 +11,8 @@
   "dependencies": {
     "globalping": "^0.2.0",
     "countries-list": "^3.0.0",
-    "ws": "^8.18.0"
+    "ws": "^8.18.0",
+    "jimp": "^1.6.0"
   },
   "devDependencies": {
     "typescript": "^5.3.0",
