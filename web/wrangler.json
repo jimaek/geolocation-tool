@@ -6,7 +6,10 @@
   "containers": [
     {
       "class_name": "GeolocateContainer",
-      "image": "./Dockerfile",
+      "image": {
+        "dockerfile": "web/Dockerfile",
+        "context": ".."
+      },
       "max_instances": 10
     }
   ],
