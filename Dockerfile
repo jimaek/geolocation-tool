@@ -4,7 +4,7 @@ WORKDIR /app
 
 # Copy and install root dependencies (for shared src)
 COPY package.json ./
-RUN npm install --omit=dev
+RUN npm install --omit=dev --ignore-scripts
 
 # Copy shared CLI source
 COPY src ./src
