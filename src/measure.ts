@@ -22,6 +22,22 @@ function extractLatencyFromTraceroute(result: any): number | null {
     return null;
   }
 
+  let hasValidHopAtThreeOrHigher = false;
+  for (let i = 2; i < result.hops.length; i++) {
+    const hop = result.hops[i];
+    if (hop.timings && hop.timings.length > 0) {
+      const rtts = hop.timings.map((t: any) => t.rtt).filter((rtt: number) => rtt > 0);
+      if (rtts.length > 0) {
+        hasValidHopAtThreeOrHigher = true;
+        break;
+      }
+    }
+  }
+
+  if (!hasValidHopAtThreeOrHigher) {
+    return null;
+  }
+
   for (let i = result.hops.length - 1; i >= 0; i--) {
     const hop = result.hops[i];
     if (hop.timings && hop.timings.length > 0) {
