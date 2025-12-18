@@ -41,32 +41,59 @@ function extractLatencyFromTraceroute(result: any, debug: boolean = false, probe
     return null;
   }
 
+  let lastValidHopIndex = -1;
   for (let i = result.hops.length - 1; i >= 0; i--) {
     const hop = result.hops[i];
     if (hop.timings && hop.timings.length > 0) {
       const rtts = hop.timings.map((t: any) => t.rtt).filter((rtt: number) => rtt > 0);
       if (rtts.length > 0) {
-        const latency = Math.min(...rtts);
-        if (debug && probeInfo) {
-          console.log(`  [ACCEPTED] ${probeInfo.city}, ${probeInfo.country} - Hop ${i + 1}: ${latency.toFixed(2)}ms`);
-          for (let j = 0; j < Math.min(result.hops.length, 5); j++) {
-            const h = result.hops[j];
-            if (h.timings && h.timings.length > 0) {
-              const hopRtts = h.timings.map((t: any) => t.rtt).filter((r: number) => r > 0);
-              if (hopRtts.length > 0) {
-                console.log(`    Hop ${j + 1}: ${hopRtts.map((r: number) => r.toFixed(2)).join(', ')} ms`);
-              }
-            } else {
-              console.log(`    Hop ${j + 1}: * *`);
-            }
-          }
-        }
-        return latency;
+        lastValidHopIndex = i;
+        break;
       }
     }
   }
 
-  return null;
+  if (lastValidHopIndex === -1) {
+    return null;
+  }
+
+  let timeoutCount = 0;
+  for (let i = lastValidHopIndex + 1; i < result.hops.length; i++) {
+    const hop = result.hops[i];
+    const hasValidTiming = hop.timings && hop.timings.length > 0 &&
+      hop.timings.some((t: any) => t.rtt > 0);
+    if (!hasValidTiming) {
+      timeoutCount++;
+    }
+  }
+
+  if (timeoutCount > 10) {
+    if (debug && probeInfo) {
+      console.log(`  [REJECTED] ${probeInfo.city}, ${probeInfo.country} - Last hop ${lastValidHopIndex + 1}, then ${timeoutCount} timeouts`);
+    }
+    return null;
+  }
+
+  const lastHop = result.hops[lastValidHopIndex];
+  const rtts = lastHop.timings.map((t: any) => t.rtt).filter((rtt: number) => rtt > 0);
+  const latency = Math.min(...rtts);
+
+  if (debug && probeInfo) {
+    console.log(`  [ACCEPTED] ${probeInfo.city}, ${probeInfo.country} - Hop ${lastValidHopIndex + 1}: ${latency.toFixed(2)}ms, ${timeoutCount} timeouts after`);
+    for (let j = 0; j < Math.min(result.hops.length, 5); j++) {
+      const h = result.hops[j];
+      if (h.timings && h.timings.length > 0) {
+        const hopRtts = h.timings.map((t: any) => t.rtt).filter((r: number) => r > 0);
+        if (hopRtts.length > 0) {
+          console.log(`    Hop ${j + 1}: ${hopRtts.map((r: number) => r.toFixed(2)).join(', ')} ms`);
+        }
+      } else {
+        console.log(`    Hop ${j + 1}: * *`);
+      }
+    }
+  }
+
+  return latency;
 }
 
 async function measureContinents(
