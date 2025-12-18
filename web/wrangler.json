@@ -2,6 +2,7 @@
   "name": "geolocate-web",
   "main": "worker/index.ts",
   "compatibility_date": "2025-06-02",
+  "compatibility_flags": ["nodejs_compat"],
   "containers": [
     {
       "class_name": "GeolocateContainer",
