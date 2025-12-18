@@ -264,7 +264,7 @@ function renderProgressBar(out: Writer, finished: number, total: number, bestNam
     line += ` - Best: ${bestName} (${bestLatency.toFixed(2)} ms)`;
   }
 
-  out.write('\r' + line.padEnd(100));
+  out.write('\x1b[2K\r' + line);
 }
 
 async function pollMeasurement(

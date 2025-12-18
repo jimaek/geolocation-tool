@@ -14,7 +14,7 @@ const TOKEN = process.env.GLOBALPING_TOKEN || '';
 const DEFAULT_LIMIT = 100;
 const MAX_LIMIT = 250;
 
-const LOGO_PATH = join(__dirname, '../../assets/logo.png');
+const LOGO_PATH = join(__dirname, '../../../assets/logo.png');
 const LOGO_WIDTH = 60;
 const BG_COLOR = { r: 15, g: 15, b: 26 }; // Match terminal background
 
@@ -64,6 +64,7 @@ async function renderLogo(): Promise<string> {
       output += '\x1b[0m\r\n';
     }
 
+    output += '\x1b[0m\r\n';
     return output;
   } catch (err) {
     console.error('Failed to render logo:', err);
@@ -182,16 +183,31 @@ function parseInput(input: string): { ip: string; limit: number } | { error: str
 }
 
 function createWriter(ws: WebSocket): Writer {
+  let buffer = '';
+  let timer: NodeJS.Timeout | null = null;
+
+  const flush = () => {
+    if (buffer && ws.readyState === WebSocket.OPEN) {
+      ws.send(buffer);
+      buffer = '';
+    }
+    timer = null;
+  };
+
+  const scheduleFlush = () => {
+    if (!timer) {
+      timer = setTimeout(flush, 10);
+    }
+  };
+
   return {
     write: (text) => {
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.send(text);
-      }
+      buffer += text;
+      scheduleFlush();
     },
     writeLine: (text) => {
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.send(text + '\r\n');
-      }
+      buffer += text + '\r\n';
+      scheduleFlush();
     }
   };
 }
@@ -228,8 +244,13 @@ async function handleCommand(ws: WebSocket, input: string) {
 }
 
 async function startServer() {
+  console.log(`Loading logo from: ${LOGO_PATH}`);
   logoArt = await renderLogo();
-  console.log('Logo rendered');
+  if (logoArt) {
+    console.log(`Logo rendered successfully (${logoArt.length} chars)`);
+  } else {
+    console.log('Logo rendering failed or returned empty');
+  }
 
   const wss = new WebSocketServer({ port: PORT });
 
@@ -237,11 +258,12 @@ async function startServer() {
     let inputBuffer = '';
     let busy = false;
 
+    let welcome = '';
     if (logoArt) {
-      ws.send(logoArt);
+      welcome += logoArt;
     }
-    ws.send(WELCOME);
-    ws.send(PROMPT);
+    welcome += WELCOME + PROMPT;
+    ws.send(welcome);
 
     ws.on('message', async (data) => {
       if (busy) return;

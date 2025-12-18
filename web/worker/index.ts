@@ -2,7 +2,7 @@ import { Container, getContainer } from '@cloudflare/containers';
 
 export class GeolocateContainer extends Container {
   defaultPort = 8080;
-  sleepAfter = '5m';
+  sleepAfter = '15m';
 
   override getEnv() {
     return {
@@ -13,7 +13,7 @@ export class GeolocateContainer extends Container {
 
 export class RateLimiter {
   state: DurableObjectState;
-  sessions: Map<string, number>;
+  sessions: Map<string, { timestamp: number; id: string }>;
 
   constructor(state: DurableObjectState) {
     this.state = state;
@@ -24,18 +24,27 @@ export class RateLimiter {
     const url = new URL(request.url);
     const ip = url.searchParams.get('ip') || 'unknown';
     const action = url.searchParams.get('action');
+    const sessionId = url.searchParams.get('session') || '';
 
     if (action === 'acquire') {
       const existing = this.sessions.get(ip);
-      if (existing && Date.now() - existing < 300000) {
-        return new Response('rate_limited', { status: 429 });
+      const now = Date.now();
+
+      if (existing) {
+        if (now - existing.timestamp < 30000 && existing.id !== sessionId) {
+          return new Response('rate_limited', { status: 429 });
+        }
       }
-      this.sessions.set(ip, Date.now());
+
+      this.sessions.set(ip, { timestamp: now, id: sessionId });
       return new Response('ok');
     }
 
     if (action === 'release') {
-      this.sessions.delete(ip);
+      const existing = this.sessions.get(ip);
+      if (!existing || existing.id === sessionId) {
+        this.sessions.delete(ip);
+      }
       return new Response('ok');
     }
 
@@ -49,17 +58,17 @@ interface Env {
   GLOBALPING_TOKEN: string;
 }
 
-async function checkRateLimit(env: Env, ip: string): Promise<boolean> {
+async function checkRateLimit(env: Env, ip: string, sessionId: string): Promise<boolean> {
   const id = env.RATE_LIMITER.idFromName('global');
   const stub = env.RATE_LIMITER.get(id);
-  const response = await stub.fetch(`http://rate-limiter/?ip=${encodeURIComponent(ip)}&action=acquire`);
+  const response = await stub.fetch(`http://rate-limiter/?ip=${encodeURIComponent(ip)}&session=${encodeURIComponent(sessionId)}&action=acquire`);
   return response.status === 200;
 }
 
-async function releaseRateLimit(env: Env, ip: string): Promise<void> {
+async function releaseRateLimit(env: Env, ip: string, sessionId: string): Promise<void> {
   const id = env.RATE_LIMITER.idFromName('global');
   const stub = env.RATE_LIMITER.get(id);
-  await stub.fetch(`http://rate-limiter/?ip=${encodeURIComponent(ip)}&action=release`);
+  await stub.fetch(`http://rate-limiter/?ip=${encodeURIComponent(ip)}&session=${encodeURIComponent(sessionId)}&action=release`);
 }
 
 function getClientIp(request: Request): string {
@@ -85,24 +94,35 @@ export default {
       }
 
       const ip = getClientIp(request);
-      const allowed = await checkRateLimit(env, ip);
+      const sessionId = url.searchParams.get('session') || '';
+
+      if (!sessionId) {
+        return new Response('Session ID required', { status: 400 });
+      }
+
+      const allowed = await checkRateLimit(env, ip, sessionId);
 
       if (!allowed) {
-        return new Response('Rate limited: only one session per IP allowed', { status: 429 });
+        return new Response('Rate limited: only one active session per IP allowed', { status: 429 });
       }
 
       const container = getContainer(env.GEOLOCATE_CONTAINER);
       const response = await container.fetch(request);
 
-      if (response.status === 101) {
-        response.webSocket?.addEventListener('close', () => {
-          releaseRateLimit(env, ip);
-        });
-      } else {
-        await releaseRateLimit(env, ip);
+      if (response.status !== 101) {
+        await releaseRateLimit(env, ip, sessionId);
       }
 
       return response;
+    }
+
+    if (url.pathname === '/release') {
+      const ip = getClientIp(request);
+      const sessionId = url.searchParams.get('session') || '';
+      if (sessionId) {
+        await releaseRateLimit(env, ip, sessionId);
+      }
+      return new Response('ok');
     }
 
     return new Response('Not found', { status: 404 });
@@ -160,6 +180,8 @@ const HTML_PAGE = `<!DOCTYPE html>
   <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
   <script>
+    const sessionId = Math.random().toString(36).substring(2) + Date.now().toString(36);
+
     const term = new Terminal({
       cursorBlink: true,
       fontSize: 14,
@@ -179,7 +201,7 @@ const HTML_PAGE = `<!DOCTYPE html>
     window.addEventListener('resize', () => fitAddon.fit());
 
     const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const ws = new WebSocket(protocol + '//' + location.host + '/ws');
+    const ws = new WebSocket(protocol + '//' + location.host + '/ws?session=' + sessionId);
     const status = document.getElementById('status');
 
     ws.onopen = () => {
@@ -195,6 +217,7 @@ const HTML_PAGE = `<!DOCTYPE html>
       status.textContent = 'Disconnected';
       status.style.color = '#a44';
       term.write('\\r\\n\\r\\n[Connection closed]\\r\\n');
+      releaseSession();
     };
 
     ws.onerror = () => {
@@ -207,6 +230,16 @@ const HTML_PAGE = `<!DOCTYPE html>
         ws.send(data);
       }
     });
+
+    function releaseSession() {
+      if (navigator.sendBeacon) {
+        navigator.sendBeacon('/release?session=' + sessionId);
+      } else {
+        fetch('/release?session=' + sessionId, { method: 'POST', keepalive: true }).catch(() => {});
+      }
+    }
+
+    window.addEventListener('beforeunload', releaseSession);
   </script>
 </body>
 </html>`;
