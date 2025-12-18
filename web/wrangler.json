@@ -1,0 +1,30 @@
+{
+  "name": "geolocate-web",
+  "main": "worker/index.ts",
+  "compatibility_date": "2025-06-02",
+  "containers": [
+    {
+      "class_name": "GeolocateContainer",
+      "image": "./Dockerfile",
+      "max_instances": 10
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "GEOLOCATE_CONTAINER",
+        "class_name": "GeolocateContainer"
+      },
+      {
+        "name": "RATE_LIMITER",
+        "class_name": "RateLimiter"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_classes": ["GeolocateContainer", "RateLimiter"]
+    }
+  ]
+}

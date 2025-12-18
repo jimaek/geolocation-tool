@@ -1,6 +1,16 @@
 import { Globalping } from 'globalping';
 import { CONTINENTS, getCountryContinent, getCountryName, getStateName } from './countries.js';
 
+export interface Writer {
+  write(text: string): void;
+  writeLine(text: string): void;
+}
+
+export const consoleWriter: Writer = {
+  write: (text) => process.stdout.write(text),
+  writeLine: (text) => console.log(text)
+};
+
 export interface ProbeResult {
   country: string;
   city: string;
@@ -104,9 +114,10 @@ function extractLatencyFromTraceroute(result: any, debug: boolean = false, probe
 
 async function measureContinents(
   client: Globalping<false>,
-  targetIp: string
+  targetIp: string,
+  out: Writer
 ): Promise<{ continent: string; avgLatency: number }> {
-  console.log('Phase 1: Detecting continent...');
+  out.writeLine('Phase 1: Detecting continent...');
 
   const result = await client.createMeasurement({
     type: 'traceroute',
@@ -123,13 +134,14 @@ async function measureContinents(
   const measurementId = result.data.id;
   const expectedProbes = result.data.probesCount;
 
-  console.log(`  Measuring from ${expectedProbes} probes...\n`);
+  out.writeLine(`  Measuring from ${expectedProbes} probes...\n`);
 
   const data = await pollMeasurementByAverage(
     client,
     measurementId,
     expectedProbes,
-    (item) => item.probe.continent
+    (item) => item.probe.continent,
+    out
   );
 
   const continentLatencies = new Map<string, number[]>();
@@ -148,7 +160,7 @@ async function measureContinents(
   for (const [continent, latencies] of continentLatencies) {
     const avgLatency = latencies.reduce((a, b) => a + b, 0) / latencies.length;
     const continentInfo = CONTINENTS.find(c => c.code === continent);
-    console.log(`  ${continentInfo?.name || continent}: ${avgLatency.toFixed(2)} ms`);
+    out.writeLine(`  ${continentInfo?.name || continent}: ${avgLatency.toFixed(2)} ms`);
     measurements.push({ continent, avgLatency });
   }
 
@@ -159,7 +171,7 @@ async function measureContinents(
   }
 
   const continentInfo = CONTINENTS.find(c => c.code === best.continent);
-  console.log(`\nBest continent: ${continentInfo?.name} (${best.avgLatency.toFixed(2)} ms)\n`);
+  out.writeLine(`\nBest continent: ${continentInfo?.name} (${best.avgLatency.toFixed(2)} ms)\n`);
 
   return best;
 }
@@ -237,7 +249,7 @@ function buildProbeResults(
   return results.sort((a, b) => a.minRtt - b.minRtt);
 }
 
-function renderProgressBar(finished: number, total: number, bestName?: string, bestLatency?: number): void {
+function renderProgressBar(out: Writer, finished: number, total: number, bestName?: string, bestLatency?: number): void {
   const percentage = (finished / total) * 100;
   const barLength = 40;
   const filledLength = Math.round((finished / total) * barLength);
@@ -252,14 +264,15 @@ function renderProgressBar(finished: number, total: number, bestName?: string, b
     line += ` - Best: ${bestName} (${bestLatency.toFixed(2)} ms)`;
   }
 
-  process.stdout.write('\r' + line.padEnd(100));
+  out.write('\r' + line.padEnd(100));
 }
 
 async function pollMeasurement(
   client: Globalping<false>,
   measurementId: string,
   expectedProbes: number,
-  fieldExtractor: (item: any) => string
+  fieldExtractor: (item: any) => string,
+  out: Writer
 ): Promise<any> {
   let bestName: string | undefined;
   let bestLatency: number | undefined;
@@ -290,10 +303,10 @@ async function pollMeasurement(
       }
     }
 
-    renderProgressBar(finishedCount, expectedProbes, bestName, bestLatency);
+    renderProgressBar(out, finishedCount, expectedProbes, bestName, bestLatency);
 
     if (data.status !== 'in-progress') {
-      process.stdout.write('\n\n');
+      out.write('\n\n');
       break;
     }
 
@@ -307,7 +320,8 @@ async function pollMeasurementByAverage(
   client: Globalping<false>,
   measurementId: string,
   expectedProbes: number,
-  fieldExtractor: (item: any) => string
+  fieldExtractor: (item: any) => string,
+  out: Writer
 ): Promise<any> {
   let bestName: string | undefined;
   let bestLatency: number | undefined;
@@ -338,10 +352,10 @@ async function pollMeasurementByAverage(
       }
     }
 
-    renderProgressBar(finishedCount, expectedProbes, bestName, bestLatency);
+    renderProgressBar(out, finishedCount, expectedProbes, bestName, bestLatency);
 
     if (data.status !== 'in-progress') {
-      process.stdout.write('\n\n');
+      out.write('\n\n');
       break;
     }
 
@@ -356,9 +370,10 @@ async function measureCountries(
   targetIp: string,
   continent: string,
   limit: number,
+  out: Writer,
   debug: boolean = false
 ): Promise<ProbeResult[]> {
-  console.log('Phase 2: Detecting country...');
+  out.writeLine('Phase 2: Detecting country...');
 
   const continentInfo = CONTINENTS.find(c => c.code === continent);
   const createResult = await client.createMeasurement({
@@ -376,23 +391,24 @@ async function measureCountries(
   const measurementId = createResult.data.id;
   const expectedProbes = createResult.data.probesCount;
 
-  console.log(`  Measuring from ${expectedProbes} probes...\n`);
+  out.writeLine(`  Measuring from ${expectedProbes} probes...\n`);
 
   const data = await pollMeasurement(
     client,
     measurementId,
     expectedProbes,
-    (item) => item.probe.country
+    (item) => item.probe.country,
+    out
   );
 
   if (debug) {
-    console.log('\n=== DEBUG: Country Detection Results ===');
+    out.writeLine('\n=== DEBUG: Country Detection Results ===');
   }
 
   const countryData = aggregateLatenciesByField(data.results, (item) => item.probe.country, debug);
 
   if (debug) {
-    console.log('=====================================\n');
+    out.writeLine('=====================================\n');
   }
 
   const results = buildProbeResults(countryData, '');
@@ -401,17 +417,17 @@ async function measureCountries(
   for (let i = 0; i < topCount; i++) {
     const r = results[i];
     const countryName = getCountryName(r.country);
-    console.log(`  ${countryName}: ${r.minRtt.toFixed(2)}ms`);
+    out.writeLine(`  ${countryName}: ${r.minRtt.toFixed(2)}ms`);
   }
 
   if (results.length > 0) {
     if (detectAnycast(results, 11, 6)) {
-      console.log('\nAnycast IP detected. This IP is most likely part of a regional or global anycast network.\n');
+      out.writeLine('\nAnycast IP detected. This IP is most likely part of a regional or global anycast network.\n');
       results[0].isAnycast = true;
     } else {
       const best = results[0];
       const countryName = getCountryName(best.country);
-      console.log(`\nBest country: ${countryName} (${best.minRtt.toFixed(2)}ms)\n`);
+      out.writeLine(`\nBest country: ${countryName} (${best.minRtt.toFixed(2)}ms)\n`);
     }
   }
 
@@ -422,9 +438,10 @@ async function measureCities(
   client: Globalping<false>,
   targetIp: string,
   country: string,
-  limit: number
+  limit: number,
+  out: Writer
 ): Promise<ProbeResult[]> {
-  console.log('Phase 3: Detecting city...');
+  out.writeLine('Phase 3: Detecting city...');
 
   const createResult = await client.createMeasurement({
     type: 'traceroute',
@@ -441,13 +458,14 @@ async function measureCities(
   const measurementId = createResult.data.id;
   const expectedProbes = createResult.data.probesCount;
 
-  console.log(`  Measuring from ${expectedProbes} probes...\n`);
+  out.writeLine(`  Measuring from ${expectedProbes} probes...\n`);
 
   const data = await pollMeasurement(
     client,
     measurementId,
     expectedProbes,
-    (item) => item.probe.city || 'Unknown'
+    (item) => item.probe.city || 'Unknown',
+    out
   );
 
   const cityData = aggregateLatenciesByField(data.results, (item) => item.probe.city || 'Unknown');
@@ -459,9 +477,10 @@ async function measureCities(
 async function measureUSStates(
   client: Globalping<false>,
   targetIp: string,
-  limit: number
+  limit: number,
+  out: Writer
 ): Promise<ProbeResult[]> {
-  console.log('Phase 3: Detecting US state...');
+  out.writeLine('Phase 3: Detecting US state...');
 
   const createResult = await client.createMeasurement({
     type: 'traceroute',
@@ -478,13 +497,14 @@ async function measureUSStates(
   const measurementId = createResult.data.id;
   const expectedProbes = createResult.data.probesCount;
 
-  console.log(`  Measuring from ${expectedProbes} probes...\n`);
+  out.writeLine(`  Measuring from ${expectedProbes} probes...\n`);
 
   const data = await pollMeasurement(
     client,
     measurementId,
     expectedProbes,
-    (item) => item.probe.state || 'Unknown'
+    (item) => item.probe.state || 'Unknown',
+    out
   );
 
   const stateData = aggregateLatenciesByField(data.results, (item) => item.probe.state || 'Unknown');
@@ -494,17 +514,17 @@ async function measureUSStates(
   for (let i = 0; i < topCount; i++) {
     const r = results[i];
     const stateName = getStateName(r.state!);
-    console.log(`  ${stateName}: ${r.minRtt.toFixed(2)}ms`);
+    out.writeLine(`  ${stateName}: ${r.minRtt.toFixed(2)}ms`);
   }
 
   if (results.length > 0) {
     if (detectAnycast(results, 11, 6)) {
-      console.log('\nAnycast IP detected. This IP is most likely part of a regional or global anycast network.\n');
+      out.writeLine('\nAnycast IP detected. This IP is most likely part of a regional or global anycast network.\n');
       results[0].isAnycast = true;
     } else {
       const best = results[0];
       const stateName = getStateName(best.state!);
-      console.log(`\nBest state: ${stateName} (${best.minRtt.toFixed(2)}ms)\n`);
+      out.writeLine(`\nBest state: ${stateName} (${best.minRtt.toFixed(2)}ms)\n`);
     }
   }
 
@@ -515,9 +535,10 @@ async function measureUSCities(
   client: Globalping<false>,
   targetIp: string,
   state: string,
-  limit: number
+  limit: number,
+  out: Writer
 ): Promise<ProbeResult[]> {
-  console.log('Phase 4: Detecting city...');
+  out.writeLine('Phase 4: Detecting city...');
 
   const createResult = await client.createMeasurement({
     type: 'traceroute',
@@ -534,13 +555,14 @@ async function measureUSCities(
   const measurementId = createResult.data.id;
   const expectedProbes = createResult.data.probesCount;
 
-  console.log(`  Measuring from ${expectedProbes} probes...\n`);
+  out.writeLine(`  Measuring from ${expectedProbes} probes...\n`);
 
   const data = await pollMeasurement(
     client,
     measurementId,
     expectedProbes,
-    (item) => item.probe.city || 'Unknown'
+    (item) => item.probe.city || 'Unknown',
+    out
   );
 
   const cityData = aggregateLatenciesByField(data.results, (item) => item.probe.city || 'Unknown');
@@ -553,19 +575,20 @@ export async function runMeasurements(
   client: Globalping<false>,
   targetIp: string,
   limit: number = 50,
-  debug: boolean = false
+  debug: boolean = false,
+  out: Writer = consoleWriter
 ): Promise<ProbeResult[]> {
-  const { continent } = await measureContinents(client, targetIp);
-  const countryResults = await measureCountries(client, targetIp, continent, limit, debug);
+  const { continent } = await measureContinents(client, targetIp, out);
+  const countryResults = await measureCountries(client, targetIp, continent, limit, out, debug);
 
   if (countryResults.length > 0 && countryResults[0].country === 'US') {
-    const stateResults = await measureUSStates(client, targetIp, limit);
+    const stateResults = await measureUSStates(client, targetIp, limit, out);
     if (stateResults.length > 0) {
       if (stateResults[0].isAnycast) {
         return stateResults;
       }
       const bestState = stateResults[0].state!;
-      const cityResults = await measureUSCities(client, targetIp, bestState, limit);
+      const cityResults = await measureUSCities(client, targetIp, bestState, limit, out);
       return cityResults;
     }
     return stateResults;
@@ -576,7 +599,7 @@ export async function runMeasurements(
       return countryResults;
     }
     const bestCountry = countryResults[0].country;
-    const cityResults = await measureCities(client, targetIp, bestCountry, limit);
+    const cityResults = await measureCities(client, targetIp, bestCountry, limit, out);
     return cityResults;
   }
 
