@@ -9,6 +9,7 @@ function printUsage() {
   console.log('\nGeolocate an IP address using latency measurements from probes worldwide.');
   console.log('\nOptions:');
   console.log('  -L, --limit <number>  Number of probes per measurement (default: 50)');
+  console.log('  -d, --debug           Show detailed traceroute data for debugging');
   console.log('\nEnvironment Variables:');
   console.log('  GLOBALPING_TOKEN      Optional token for higher rate limits');
   console.log('                        Get your token at: https://dash.globalping.io');
@@ -90,6 +91,7 @@ async function main() {
 
   let ip = '';
   let limit = 50;
+  let debug = false;
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
@@ -102,6 +104,8 @@ async function main() {
       }
       limit = Number(limitValue);
       i++;
+    } else if (arg === '-d' || arg === '--debug') {
+      debug = true;
     } else if (!arg.startsWith('-')) {
       ip = arg;
     }
@@ -133,7 +137,7 @@ async function main() {
   }
 
   try {
-    const results = await runMeasurements(client, ip, limit);
+    const results = await runMeasurements(client, ip, limit, debug);
     printResults(results);
     process.exit(0);
   } catch (error: any) {

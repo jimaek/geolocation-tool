@@ -17,7 +17,7 @@ function checkRateLimitError(result: any): void {
   }
 }
 
-function extractLatencyFromTraceroute(result: any): number | null {
+function extractLatencyFromTraceroute(result: any, debug: boolean = false, probeInfo?: any): number | null {
   if (result.status !== 'finished' || !result.hops) {
     return null;
   }
@@ -35,6 +35,9 @@ function extractLatencyFromTraceroute(result: any): number | null {
   }
 
   if (!hasValidHopAtThreeOrHigher) {
+    if (debug && probeInfo) {
+      console.log(`  [REJECTED] ${probeInfo.city}, ${probeInfo.country} - No valid hop at position 3+`);
+    }
     return null;
   }
 
@@ -43,7 +46,22 @@ function extractLatencyFromTraceroute(result: any): number | null {
     if (hop.timings && hop.timings.length > 0) {
       const rtts = hop.timings.map((t: any) => t.rtt).filter((rtt: number) => rtt > 0);
       if (rtts.length > 0) {
-        return Math.min(...rtts);
+        const latency = Math.min(...rtts);
+        if (debug && probeInfo) {
+          console.log(`  [ACCEPTED] ${probeInfo.city}, ${probeInfo.country} - Hop ${i + 1}: ${latency.toFixed(2)}ms`);
+          for (let j = 0; j < Math.min(result.hops.length, 5); j++) {
+            const h = result.hops[j];
+            if (h.timings && h.timings.length > 0) {
+              const hopRtts = h.timings.map((t: any) => t.rtt).filter((r: number) => r > 0);
+              if (hopRtts.length > 0) {
+                console.log(`    Hop ${j + 1}: ${hopRtts.map((r: number) => r.toFixed(2)).join(', ')} ms`);
+              }
+            } else {
+              console.log(`    Hop ${j + 1}: * *`);
+            }
+          }
+        }
+        return latency;
       }
     }
   }
@@ -119,12 +137,13 @@ function sleep(ms: number): Promise<void> {
 
 function aggregateLatenciesByField(
   results: any[],
-  fieldExtractor: (item: any) => string
+  fieldExtractor: (item: any) => string,
+  debug: boolean = false
 ): Map<string, number[]> {
   const dataMap = new Map<string, number[]>();
 
   for (const item of results) {
-    const latency = extractLatencyFromTraceroute(item.result);
+    const latency = extractLatencyFromTraceroute(item.result, debug, item.probe);
     if (latency !== null) {
       const fieldValue = fieldExtractor(item);
       if (!dataMap.has(fieldValue)) {
@@ -303,7 +322,8 @@ async function measureCountries(
   client: Globalping<false>,
   targetIp: string,
   continent: string,
-  limit: number
+  limit: number,
+  debug: boolean = false
 ): Promise<ProbeResult[]> {
   console.log('Phase 2: Detecting country...');
 
@@ -332,7 +352,16 @@ async function measureCountries(
     (item) => item.probe.country
   );
 
-  const countryData = aggregateLatenciesByField(data.results, (item) => item.probe.country);
+  if (debug) {
+    console.log('\n=== DEBUG: Country Detection Results ===');
+  }
+
+  const countryData = aggregateLatenciesByField(data.results, (item) => item.probe.country, debug);
+
+  if (debug) {
+    console.log('=====================================\n');
+  }
+
   const results = buildProbeResults(countryData, '');
 
   const topCount = Math.min(3, results.length);
@@ -480,10 +509,11 @@ async function measureUSCities(
 export async function runMeasurements(
   client: Globalping<false>,
   targetIp: string,
-  limit: number = 50
+  limit: number = 50,
+  debug: boolean = false
 ): Promise<ProbeResult[]> {
   const { continent } = await measureContinents(client, targetIp);
-  const countryResults = await measureCountries(client, targetIp, continent, limit);
+  const countryResults = await measureCountries(client, targetIp, continent, limit, debug);
 
   if (countryResults.length > 0 && countryResults[0].country === 'US') {
     const stateResults = await measureUSStates(client, targetIp, limit);
