@@ -138,6 +138,9 @@ async function main() {
 
   try {
     const results = await runMeasurements(client, ip, limit, debug);
+    if (results.length > 0 && results[0].isAnycast) {
+      process.exit(0);
+    }
     printResults(results);
     process.exit(0);
   } catch (error: any) {

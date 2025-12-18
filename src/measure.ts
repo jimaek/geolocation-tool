@@ -9,12 +9,18 @@ export interface ProbeResult {
   avgRtt: number;
   probeAsn: number;
   probeNetwork: string;
+  isAnycast?: boolean;
 }
 
 function checkRateLimitError(result: any): void {
   if (!result.ok && result.response?.status === 429) {
     throw new Error('You have run out of credits for this session. You can wait for the rate limit to reset or get higher limits by sponsoring us or hosting probes. Learn more at https://dash.globalping.io?view=add-credits');
   }
+}
+
+function detectAnycast(results: ProbeResult[], thresholdMs: number, minCount: number): boolean {
+  const lowLatencyCount = results.filter(r => r.minRtt < thresholdMs).length;
+  return lowLatencyCount >= minCount;
 }
 
 function extractLatencyFromTraceroute(result: any, debug: boolean = false, probeInfo?: any): number | null {
@@ -399,9 +405,14 @@ async function measureCountries(
   }
 
   if (results.length > 0) {
-    const best = results[0];
-    const countryName = getCountryName(best.country);
-    console.log(`\nBest country: ${countryName} (${best.minRtt.toFixed(2)}ms)\n`);
+    if (detectAnycast(results, 11, 6)) {
+      console.log('\nAnycast IP detected. This IP is most likely part of a regional or global anycast network.\n');
+      results[0].isAnycast = true;
+    } else {
+      const best = results[0];
+      const countryName = getCountryName(best.country);
+      console.log(`\nBest country: ${countryName} (${best.minRtt.toFixed(2)}ms)\n`);
+    }
   }
 
   return results;
@@ -487,9 +498,14 @@ async function measureUSStates(
   }
 
   if (results.length > 0) {
-    const best = results[0];
-    const stateName = getStateName(best.state!);
-    console.log(`\nBest state: ${stateName} (${best.minRtt.toFixed(2)}ms)\n`);
+    if (detectAnycast(results, 11, 6)) {
+      console.log('\nAnycast IP detected. This IP is most likely part of a regional or global anycast network.\n');
+      results[0].isAnycast = true;
+    } else {
+      const best = results[0];
+      const stateName = getStateName(best.state!);
+      console.log(`\nBest state: ${stateName} (${best.minRtt.toFixed(2)}ms)\n`);
+    }
   }
 
   return results;
@@ -545,6 +561,9 @@ export async function runMeasurements(
   if (countryResults.length > 0 && countryResults[0].country === 'US') {
     const stateResults = await measureUSStates(client, targetIp, limit);
     if (stateResults.length > 0) {
+      if (stateResults[0].isAnycast) {
+        return stateResults;
+      }
       const bestState = stateResults[0].state!;
       const cityResults = await measureUSCities(client, targetIp, bestState, limit);
       return cityResults;
@@ -553,6 +572,9 @@ export async function runMeasurements(
   }
 
   if (countryResults.length > 0) {
+    if (countryResults[0].isAnycast) {
+      return countryResults;
+    }
     const bestCountry = countryResults[0].country;
     const cityResults = await measureCities(client, targetIp, bestCountry, limit);
     return cityResults;
