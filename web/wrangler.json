@@ -25,7 +25,8 @@
   "migrations": [
     {
       "tag": "v1",
-      "new_classes": ["GeolocateContainer", "RateLimiter"]
+      "new_sqlite_classes": ["GeolocateContainer"],
+      "new_classes": ["RateLimiter"]
     }
   ]
 }
