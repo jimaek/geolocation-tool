@@ -15,6 +15,16 @@ geolocate
 
 ```
 
+### Docker
+```shell
+docker run \
+-e GLOBALPING_TOKEN=<optional_token> \
+--name geolocation-tool \
+--rm \
+$(docker build -q .) \
+-- <IP_ADDRESS> [OPTIONS]
+```
+
 ### Usage
 
 It's recommended to run the tool with a token for a higher limit of 500 tests per hour.
